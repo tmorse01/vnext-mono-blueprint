@@ -1,0 +1,108 @@
+name: Coordinated preview build
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+  # Cleanup uses only trusted workflow code and PR number metadata; it never checks out the PR head.
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  # Let a close event finish its guarded cleanup if an earlier build is still active.
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
+jobs:
+  build:
+    name: build all preview applications
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      preview_suffix: ${{ steps.scope.outputs.preview_suffix }}
+      database_name: ${{ steps.scope.outputs.database_name }}
+      resource_group_name: ${{ steps.scope.outputs.resource_group_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.13.0
+      # The repository lockfile is not committed yet. Switch to --frozen-lockfile once it exists.
+      - name: Install workspace dependencies
+        run: pnpm install
+      - name: Build all four applications and their workspace dependencies
+        run: pnpm build
+      - name: Assign isolated PR resource names
+        id: scope
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Invalid pull request number" >&2
+            exit 1
+          fi
+          echo "preview_suffix=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "database_name=VNextPreviewPR${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "resource_group_name=rg-vnext-preview-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Coordinated preview build"
+            echo "Source commit: `$SOURCE_SHA`"
+            echo "Isolated preview suffix: `pr-${PR_NUMBER}`"
+            echo "Isolated database: `VNextPreviewPR${PR_NUMBER}`"
+            echo "Resource group contract: `rg-vnext-preview-pr-${PR_NUMBER}`"
+            echo "The build covers lending-web, admin-web, lending-api, and integrations-api. Cloud deployment is disabled until the protected preview environment and container artifact workflow are configured."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    name: delete closed PR preview scope
+    if: github.event.action == 'closed' && vars.AZURE_PREVIEW_CLEANUP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: preview-cleanup
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_RESOURCE_GROUP_PREFIX: ${{ vars.AZURE_PREVIEW_RESOURCE_GROUP_PREFIX }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      # No checkout or PR-controlled commands run in this privileged cleanup job.
+      - name: Require the dedicated preview prefix and PR scope
+        id: scope
+        shell: bash
+        run: |
+          if [[ "$AZURE_RESOURCE_GROUP_PREFIX" != "rg-vnext-preview" || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Cleanup requires prefix rg-vnext-preview and a numeric PR number." >&2
+            exit 1
+          fi
+          echo "resource_group=${AZURE_RESOURCE_GROUP_PREFIX}-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Delete only this PR's isolated resource group
+        env:
+          RESOURCE_GROUP: ${{ steps.scope.outputs.resource_group }}
+        shell: bash
+        run: |
+          if [[ ! "$RESOURCE_GROUP" =~ ^rg-vnext-preview-pr-[0-9]+$ ]]; then
+            echo "Refusing unexpected resource group name: $RESOURCE_GROUP" >&2
+            exit 1
+          fi
+          if [[ "$(az group exists --name "$RESOURCE_GROUP")" == "true" ]]; then
+            az group delete --name "$RESOURCE_GROUP" --yes --no-wait
+            echo "Deletion requested for $RESOURCE_GROUP."
+          else
+            echo "No preview resource group exists for this PR."
+          fi

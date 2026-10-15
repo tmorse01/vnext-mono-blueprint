@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.13.0
+      # The repository lockfile is not committed yet. Switch to --frozen-lockfile once it exists.
+      - name: Install workspace dependencies
+        run: pnpm install
+      - name: Check formatting
+        run: pnpm format:check
+      - name: Check application and package boundaries, then lint
+        run: pnpm lint
+      - name: Type check all workspaces
+        run: pnpm typecheck
+      - name: Run lending, admin, and lending API unit/component tests
+        run: pnpm --filter @vnext/lending-web --filter @vnext/admin-web --filter @vnext/lending-api test
+      - name: Build all applications and packages
+        run: pnpm build
+      - name: Check generated OpenAPI contract
+        run: pnpm api:check
+      - name: Install Chromium for the lending browser journey
+        run: pnpm --filter @vnext/lending-web exec playwright install --with-deps chromium
+      - name: Run lending browser journey
+        env:
+          VITE_USE_MOCKS: "true"
+        run: pnpm --filter @vnext/lending-web test:e2e
+
+  migrations:
+    name: migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DB_SERVER: 127.0.0.1
+      DB_PORT: "1433"
+      DB_NAME: master
+      DB_USER: sa
+      DB_PASSWORD: VNext_CI_Only_2026!StrongPwd
+      DB_ENCRYPT: "true"
+      DB_TRUST_SERVER_CERTIFICATE: "true"
+      DB_CONNECT_TIMEOUT_MS: "30000"
+      DB_REQUEST_TIMEOUT_MS: "30000"
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-CU23-ubuntu-22.04
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: VNext_CI_Only_2026!StrongPwd
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'VNext_CI_Only_2026!StrongPwd' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.13.0
+      # The repository lockfile is not committed yet. Switch to --frozen-lockfile once it exists.
+      - name: Install workspace dependencies
+        run: pnpm install
+      - name: Create an empty SQL Server database
+        working-directory: packages/db
+        run: |
+          node --input-type=module <<'NODE'
+          import * as tedious from 'tedious';
+
+          const connection = new tedious.Connection({
+            server: process.env.DB_SERVER,
+            authentication: { type: 'default', options: { userName: process.env.DB_USER, password: process.env.DB_PASSWORD } },
+            options: { port: Number(process.env.DB_PORT), database: 'master', encrypt: true, trustServerCertificate: true },
+          });
+          const connected = new Promise((resolve, reject) => {
+            connection.once('connect', (error) => error ? reject(error) : resolve());
+          });
+          await connected;
+          try {
+            await new Promise((resolve, reject) => {
+              const request = new tedious.Request("IF DB_ID(N'VNextEmpty') IS NULL CREATE DATABASE [VNextEmpty]", (error) => error ? reject(error) : resolve());
+              connection.execSql(request);
+            });
+          } finally {
+            connection.close();
+          }
+          NODE
+      - name: Apply all migrations to the empty database
+        env:
+          DB_NAME: VNextEmpty
+        run: pnpm db:migrate
+      - name: Seed synthetic data twice and verify schema
+        env:
+          DB_NAME: VNextEmpty
+        run: |
+          pnpm db:seed
+          pnpm db:seed
+          pnpm --filter @vnext/db schema:check
+      - name: Restore prior-schema fixture when present
+        id: upgrade-fixture
+        working-directory: packages/db
+        env:
+          DB_NAME: master
+          UPGRADE_FIXTURE: test/fixtures/upgrade-from-prior.sql
+        run: |
+          if [ ! -f "$UPGRADE_FIXTURE" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Upgrade migration validation skipped: $UPGRADE_FIXTURE is not committed yet."
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import * as tedious from 'tedious';
+
+          const connection = new tedious.Connection({
+            server: process.env.DB_SERVER,
+            authentication: { type: 'default', options: { userName: process.env.DB_USER, password: process.env.DB_PASSWORD } },
+            options: { port: Number(process.env.DB_PORT), database: 'master', encrypt: true, trustServerCertificate: true },
+          });
+          const connected = new Promise((resolve, reject) => {
+            connection.once('connect', (error) => error ? reject(error) : resolve());
+          });
+          await connected;
+          const execute = (statement) => new Promise((resolve, reject) => {
+            connection.execSql(new tedious.Request(statement, (error) => error ? reject(error) : resolve()));
+          });
+          try {
+            await execute("IF DB_ID(N'VNextUpgrade') IS NULL CREATE DATABASE [VNextUpgrade]");
+            const fixture = await readFile(process.env.UPGRADE_FIXTURE, 'utf8');
+            for (const batch of fixture.split(/^\s*GO\s*$/imu).map((part) => part.trim()).filter(Boolean)) await execute(batch);
+          } finally {
+            connection.close();
+          }
+          NODE
+      - name: Upgrade prior-schema fixture to the current schema
+        if: steps.upgrade-fixture.outputs.available == 'true'
+        env:
+          DB_NAME: VNextUpgrade
+        run: |
+          pnpm db:migrate
+          pnpm --filter @vnext/db schema:check
+
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - run: terraform -chdir=infrastructure/terraform fmt -check -recursive
+      - run: node tooling/scripts/terraform-validate.mjs

@@ -1,0 +1,18 @@
+name_prefix             = "vnext-example"
+environment_name        = "reference"
+resource_group_name     = "rg-vnext-example"
+location                = "westus2"
+sql_server_name         = "sql-vnext-example-unique"
+sql_database_name       = "vnext"
+sql_admin_login         = "set-through-secure-input"
+sql_admin_password      = "set-through-secure-input"
+key_vault_name          = "kv-vnext-example-unique"
+archive_storage_name    = "stvnextarchiveunique"
+lending_web_image       = "example.invalid/vnext/lending-web@sha256:REPLACE"
+admin_web_image          = "example.invalid/vnext/admin-web@sha256:REPLACE"
+lending_api_image       = "example.invalid/vnext/lending-api@sha256:REPLACE"
+integrations_api_image  = "example.invalid/vnext/integrations-api@sha256:REPLACE"
+
+# Set these from a protected environment only. Do not commit this as terraform.tfvars.
+sql_public_network_access_enabled       = false
+archive_public_network_access_enabled   = false

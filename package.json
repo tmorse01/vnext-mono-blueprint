@@ -1,0 +1,43 @@
+{
+  "name": "vnext-lending-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@12.13.0",
+  "engines": {
+    "node": ">=24.22.0 <25",
+    "pnpm": "12.13.0"
+  },
+  "scripts": {
+    "dev": "node tooling/scripts/dev.mjs",
+    "dev:lending-web": "node tooling/scripts/dev-app.mjs lending-web",
+    "dev:admin-web": "node tooling/scripts/dev-app.mjs admin-web",
+    "dev:lending-api": "node tooling/scripts/dev-app.mjs lending-api",
+    "dev:integrations-api": "node tooling/scripts/dev-app.mjs integrations-api",
+    "build": "turbo build",
+    "lint": "node tooling/scripts/check-boundaries.mjs && eslint . && turbo lint",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "turbo test",
+    "test:e2e": "turbo test:e2e",
+    "api:generate": "pnpm --filter @vnext/metadata build && pnpm --filter @vnext/contracts api:generate",
+    "api:check": "pnpm --filter @vnext/metadata build && pnpm --filter @vnext/contracts api:generate -- --check",
+    "db:up": "docker compose --env-file .env -f infrastructure/compose.yaml up -d sqlserver",
+    "db:down": "docker compose --env-file .env -f infrastructure/compose.yaml stop sqlserver",
+    "db:migrate": "pnpm --filter @vnext/db build && pnpm --filter @vnext/db migrate",
+    "db:seed": "pnpm --filter @vnext/db build && pnpm --filter @vnext/db seed",
+    "db:reset": "node tooling/scripts/db-reset.mjs",
+    "setup:local": "node tooling/scripts/setup-local.mjs",
+    "terraform:fmt:check": "terraform -chdir=infrastructure/terraform fmt -check -recursive",
+    "terraform:validate": "node tooling/scripts/terraform-validate.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "eslint": "catalog:",
+    "globals": "catalog:",
+    "prettier": "catalog:",
+    "turbo": "2.8.11",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:"
+  }
+}

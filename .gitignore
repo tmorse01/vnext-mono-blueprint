@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.log
+.DS_Store
+Thumbs.db

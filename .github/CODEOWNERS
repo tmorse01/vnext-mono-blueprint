@@ -1,0 +1,5 @@
+# Ownership suggestions only. Configure required reviews and branch protection in GitHub settings.
+* @maintainers
+/infrastructure/ @platform-operations
+/.github/workflows/ @platform-operations
+/docs/operations.md @platform-operations @security

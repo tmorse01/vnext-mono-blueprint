@@ -1,0 +1,122 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup local environment",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["setup:local"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run all apps (with local setup)",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Build lending API dependencies",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["exec", "turbo", "build", "--filter=@vnext/lending-api^..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build integrations API dependencies",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["exec", "turbo", "build", "--filter=@vnext/integrations-api^..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build lending web dependencies",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["exec", "turbo", "build", "--filter=@vnext/lending-web^..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build admin web dependencies",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["exec", "turbo", "build", "--filter=@vnext/admin-web^..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Start lending web",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev:lending-web"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "dependsOn": "Build lending web dependencies",
+      "problemMatcher": {
+        "pattern": [{ "regexp": ".*", "message": 0 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "http://localhost:5173/"
+        }
+      }
+    },
+    {
+      "label": "Start admin web",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev:admin-web"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "dependsOn": "Build admin web dependencies",
+      "problemMatcher": {
+        "pattern": [{ "regexp": ".*", "message": 0 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "http://localhost:5174/"
+        }
+      }
+    },
+    {
+      "label": "Start lending API",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev:lending-api"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "dependsOn": "Build lending API dependencies",
+      "problemMatcher": {
+        "pattern": [{ "regexp": ".*", "message": 0 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "server.started.*lending-api"
+        }
+      }
+    },
+    {
+      "label": "Start integrations API",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev:integrations-api"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "dependsOn": "Build integrations API dependencies",
+      "problemMatcher": {
+        "pattern": [{ "regexp": ".*", "message": 0 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "server.started.*integrations-api"
+        }
+      }
+    }
+  ]
+}

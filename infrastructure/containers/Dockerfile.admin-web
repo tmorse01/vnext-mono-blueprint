@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1.7
+# Build from the repository root: docker build -f infrastructure/containers/Dockerfile.admin-web .
+FROM --platform=linux/amd64 node:24.22.0-bookworm-slim AS build
+WORKDIR /workspace
+RUN corepack enable && corepack prepare pnpm@12.13.0 --activate
+
+COPY package.json pnpm-workspace.yaml .npmrc turbo.json tsconfig.base.json ./
+COPY apps ./apps
+COPY packages ./packages
+RUN pnpm install --no-frozen-lockfile
+RUN pnpm --filter '@vnext/admin-web...' build
+
+FROM --platform=linux/amd64 nginxinc/nginx-unprivileged:1.27-alpine AS runtime
+ENV API_UPSTREAM=http://api:3000
+COPY infrastructure/containers/nginx.conf /etc/nginx/templates/default.conf.template
+COPY --from=build /workspace/apps/admin-web/dist/ /usr/share/nginx/html/
+EXPOSE 8080
+USER 101
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1

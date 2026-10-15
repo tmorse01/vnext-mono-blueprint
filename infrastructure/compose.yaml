@@ -1,0 +1,33 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-CU23-ubuntu-22.04
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: ${SQLSERVER_ACCEPT_EULA:-Y}
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD:?Set a synthetic local-only password in .env}
+    ports:
+      - "127.0.0.1:${DB_PORT:-1433}:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        - CMD
+        - /opt/mssql-tools18/bin/sqlcmd
+        - -C
+        - -S
+        - localhost
+        - -U
+        - sa
+        - -P
+        - ${DB_PASSWORD:?Set a synthetic local-only password in .env}
+        - -Q
+        - SELECT 1
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  sqlserver-data:

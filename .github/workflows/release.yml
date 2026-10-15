@@ -1,0 +1,146 @@
+name: Independent application release
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: Existing Container App to update
+        required: true
+        type: choice
+        options: [lending-web, admin-web, lending-api, integrations-api]
+      image:
+        description: Full immutable registry image reference, including @sha256:<64 lowercase hex characters>
+        required: true
+        type: string
+      run_migrations:
+        description: Run the additive database migration job before updating the app
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: validate release request
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.release.outputs.app }}
+      image: ${{ steps.release.outputs.image }}
+    steps:
+      - name: Validate immutable image and application selection
+        id: release
+        env:
+          APP: ${{ inputs.app }}
+          IMAGE: ${{ inputs.image }}
+        shell: bash
+        run: |
+          case "$APP" in
+            lending-web|admin-web|lending-api|integrations-api) ;;
+            *) echo "Unsupported application: $APP" >&2; exit 1 ;;
+          esac
+          if [[ ! "$IMAGE" =~ ^[a-z0-9.-]+(:[0-9]+)?/[a-zA-Z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "Image must be a full registry reference pinned by a sha256 digest." >&2
+            exit 1
+          fi
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+  migrate:
+    name: apply compatible database migrations
+    if: inputs.run_migrations
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production-migrations
+    permissions:
+      contents: read
+    env:
+      DB_SERVER: ${{ vars.AZURE_SQL_SERVER }}
+      DB_PORT: "1433"
+      DB_NAME: ${{ vars.AZURE_SQL_DATABASE }}
+      DB_USER: ${{ secrets.DB_MIGRATION_USER }}
+      DB_PASSWORD: ${{ secrets.DB_MIGRATION_PASSWORD }}
+      DB_ENCRYPT: "true"
+      DB_TRUST_SERVER_CERTIFICATE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.13.0
+      # Replace with --frozen-lockfile when pnpm-lock.yaml has been committed.
+      - name: Install workspace dependencies
+        run: pnpm install
+      - name: Apply committed migrations and verify schema
+        run: |
+          pnpm db:migrate
+          pnpm --filter @vnext/db schema:check
+
+  deploy:
+    name: update existing production app
+    needs: [prepare, migrate]
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      RELEASE_APP: ${{ needs.prepare.outputs.app }}
+      RELEASE_IMAGE: ${{ needs.prepare.outputs.image }}
+      AZURE_APP_LENDING_WEB: ${{ vars.AZURE_APP_LENDING_WEB }}
+      AZURE_APP_ADMIN_WEB: ${{ vars.AZURE_APP_ADMIN_WEB }}
+      AZURE_APP_LENDING_API: ${{ vars.AZURE_APP_LENDING_API }}
+      AZURE_APP_INTEGRATIONS_API: ${{ vars.AZURE_APP_INTEGRATIONS_API }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Update the selected existing Container App
+        id: deploy
+        shell: bash
+        run: |
+          case "$RELEASE_APP" in
+            lending-web) APP_NAME="$AZURE_APP_LENDING_WEB" ;;
+            admin-web) APP_NAME="$AZURE_APP_ADMIN_WEB" ;;
+            lending-api) APP_NAME="$AZURE_APP_LENDING_API" ;;
+            integrations-api) APP_NAME="$AZURE_APP_INTEGRATIONS_API" ;;
+            *) echo "Unsupported application: $RELEASE_APP" >&2; exit 1 ;;
+          esac
+          if [[ -z "$AZURE_RESOURCE_GROUP" || -z "$APP_NAME" ]]; then
+            echo "Configure AZURE_RESOURCE_GROUP and the selected app name in the protected production environment." >&2
+            exit 1
+          fi
+          # `update` targets an existing app and fails if it does not exist; it creates no Azure resources.
+          az containerapp update \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --image "$RELEASE_IMAGE" \
+            --only-show-errors
+          for attempt in $(seq 1 30); do
+            state="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$APP_NAME" --query properties.provisioningState -o tsv)"
+            latest="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$APP_NAME" --query properties.latestRevisionName -o tsv)"
+            ready="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$APP_NAME" --query properties.latestReadyRevisionName -o tsv)"
+            if [[ "$state" == "Succeeded" && -n "$latest" && "$latest" == "$ready" ]]; then
+              echo "revision=$latest" >> "$GITHUB_OUTPUT"
+              echo "Released $RELEASE_APP at $RELEASE_IMAGE as revision $latest." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "The new Container App revision did not become ready within five minutes." >&2
+          exit 1

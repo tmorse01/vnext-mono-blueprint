@@ -1,0 +1,52 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Lending API (debug)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/apps/lending-api/src/main.ts",
+      "envFile": "${workspaceFolder}/.env",
+      "preLaunchTask": "Build lending API dependencies",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Integrations API (debug)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/apps/integrations-api/src/main.ts",
+      "envFile": "${workspaceFolder}/.env",
+      "preLaunchTask": "Build integrations API dependencies",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Lending Web (Chrome)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/apps/lending-web",
+      "preLaunchTask": "Start lending web"
+    },
+    {
+      "name": "Admin Web (Chrome)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5174",
+      "webRoot": "${workspaceFolder}/apps/admin-web",
+      "preLaunchTask": "Start admin web"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Lending Web + API",
+      "configurations": ["Lending API (debug)", "Lending Web (Chrome)"],
+      "stopAll": true
+    }
+  ]
+}

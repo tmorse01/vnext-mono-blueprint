@@ -1,0 +1,24 @@
+# Implementation log
+
+## Foundation
+
+- The workspace uses pnpm, Turborepo, and strict TypeScript. Node.js 24.22.0 is pinned as the current LTS line.
+- The project's `.git` metadata is read-only in the current environment. The folder already contains an empty Git repository; `HEAD` and the index could not be updated here.
+- Package registry access is unavailable in the current shell, so package installation and lockfile generation are pending an environment with registry access.
+- SQL Server integration work requires the Docker Linux engine, which was not running at implementation start.
+
+## Initial implementation
+
+- The first database and shared server-platform sections are complete. The database includes lending, metadata, identity, audit/outbox, and integration-delivery tables; the second migration adds nullable legacy-safe terms and typed product details. Synthetic seed data is idempotent.
+- The lending web section now includes sign-in, URL-driven scenario list, editable assumptions with optimistic autosave, audit history, and component/Playwright journeys. The admin metadata workflow and API sections are being integrated by their owners.
+- Six specialists have owned isolated workstreams in parallel: database foundation, server platform, delivery/operations, lending API/integrations, lending web, and metadata administration. The captain owns contracts, root config, cross-workstream integration, and final review. See `docs/implementation-plan.md` for status and the completion-report format.
+- Root scripts now load ignored `.env` configuration into local API/database child processes, generate only local synthetic credentials, and expose individual app dev commands. The reset path passes its explicit confirmation to the database command.
+- Contract schemas now cover scenarios, auth, metadata revisions/drafts/preview/publication, provider callbacks, and integration writes. OpenAPI generation has a drift-check mode; the generated baseline still needs package access to create and verify.
+- Static checks passed for Node script syntax, Terraform formatting, and Docker Compose configuration with a synthetic validation password. Terraform provider initialization, pnpm install/lockfile generation, TypeScript checks, unit/API/UI tests, SQL Server migrations, and builds have not run because registry DNS is unavailable, the system Node 22.14.0 is below the pinned Node line, and the bundled runtime is Node 24.19.0 with pnpm 11.25.0 (the project pins Node 24.22.0 and pnpm 12.13.0). The Docker Linux engine is also stopped.
+- Git metadata remains read-only. The root was already an empty repository on `master`; branch rename to `main` and the initial commit cannot be recorded in this environment.
+- The admin metadata workflow now includes portable JSON export/import that carries only family and document data, applies imports to the selected target scope, and revalidates before save. The admin worker completed its section; its tests remain unrun because dependencies are unavailable.
+- Cross-section review corrected the scenario detail contract to retain its optimistic version and metadata revision tokens, and kept legacy `rate` / `termMonths` values nullable during edits so another field can be saved without fabricating loan terms.
+- The delivery worker completed CI, preview-cleanup, release-workflow, and operations-document changes. A separate acceptance audit found remaining blueprint gaps in runnable container artifacts, durable audit archiving, production telemetry/flag adapters, organization/person/loan end-to-end features, SQL Server integration/upgrade coverage, and generated lock/OpenAPI artifacts; these are tracked in `docs/implementation-plan.md`.
+- Rechecked with the bundled runtime: Node script syntax, Terraform formatting, and Compose configuration passed. The bundled Node 24.19.0 and pnpm 11.25.0 still do not satisfy the pinned 24.22.0 / 12.13.0 toolchain, and network package access remains unavailable.
+- The API worker completed auth, scenario/pricing/audit, metadata administration, provider callback/idempotency, and dedicated runtime DB credential handling. It added focused auth, cursor, metadata, callback, and credential tests; these tests and SQL grants remain unexecuted/unapplied because dependencies and SQL Server are unavailable. Captain review also added the missing lending-web development proxy for same-origin API requests.
+- The container worker completed four Linux/amd64 multi-stage Dockerfiles. API images deploy production dependency closures and run non-root; web images serve Vite output through non-root nginx and proxy same-origin `/api` calls. Terraform now accepts the private `api_upstream` origin for both web apps. Docker build validation is blocked by the unavailable Linux engine and package registry.
